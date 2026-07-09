@@ -631,7 +631,12 @@
   async function buildMatrix(points) {
     // Try OSRM public table service (free, no key). Falls back to haversine.
     const coordStr = points.map(p => `${p.lon},${p.lat}`).join(";");
-    const url = `https://router.project-osrm.org/table/v1/driving/${coordStr}?annotations=duration,distance`;
+    // Routed through our own /api/osrm proxy (a Cloudflare Pages Function) rather than
+    // calling router.project-osrm.org directly — some networks/browsers block that
+    // domain outright even though it's a normal free public service. The proxy runs
+    // the request from Cloudflare's edge instead, and also falls back to a second
+    // free OSRM mirror server-side before giving up.
+    const url = `/api/osrm/table/v1/driving/${coordStr}?annotations=duration,distance`;
     try {
       const resp = await fetch(url);
       if (!resp.ok) throw new Error("OSRM table request failed");
@@ -659,7 +664,7 @@
   async function getRouteGeometry(points) {
     // Real road-following geometry for the final ordered route (for map drawing only).
     const coordStr = points.map(p => `${p.lon},${p.lat}`).join(";");
-    const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+    const url = `/api/osrm/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
     try {
       const resp = await fetch(url);
       if (!resp.ok) throw new Error("fail");
