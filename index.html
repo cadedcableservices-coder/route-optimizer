@@ -394,15 +394,54 @@
   initMap();
 
   // ---------- geocoding (Nominatim, no API key) ----------
+  // Rural PA (and many other) addresses often carry a USPS mailing city/zip that
+  // differs from the actual township/city OpenStreetMap has the road tagged under
+  // (e.g. "Williamsport, PA 17701" mail delivery for a road OSM files under
+  // "Old Lycoming Township, PA 17702"). A literal address string can therefore
+  // fail to match even though the street is in OSM's data. To stay smart about
+  // this without an API key, we retry with progressively simplified queries and
+  // flag the result as "approximate" whenever we had to drop the zip/city to find it.
+  async function nominatimSearch(q) {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" + encodeURIComponent(q);
+    const resp = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!resp.ok) throw new Error("network");
+    const data = await resp.json();
+    return (data && data.length) ? data[0] : null;
+  }
+
   async function geocodeAddress(address) {
     const key = address.trim().toLowerCase();
     if (geocache[key]) return geocache[key];
-    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" + encodeURIComponent(address);
-    const resp = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!resp.ok) throw new Error("Geocoding request failed for: " + address);
-    const data = await resp.json();
-    if (!data || !data.length) throw new Error("Could not find location for: " + address);
-    const result = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name };
+
+    const attempts = [address];
+    // Drop a trailing ZIP (5-digit or ZIP+4) — common source of city/zip mismatch.
+    const noZip = address.replace(/\s*\b\d{5}(-\d{4})?\b\s*$/, "").replace(/,\s*$/, "");
+    if (noZip !== address) attempts.push(noZip);
+    // Drop the city segment too, keeping street + state, as a last resort.
+    const parts = noZip.split(",").map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      const streetAndState = [parts[0], parts[parts.length - 1]].join(", ");
+      attempts.push(streetAndState);
+    }
+
+    let found = null, usedAttemptIndex = -1;
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        found = await nominatimSearch(attempts[i]);
+      } catch (e) {
+        found = null;
+      }
+      if (found) { usedAttemptIndex = i; break; }
+      if (i < attempts.length - 1) await sleep(1100); // stay polite to the free geocoder between retries
+    }
+    if (!found) throw new Error("Could not find location for: " + address);
+
+    const result = {
+      lat: parseFloat(found.lat),
+      lon: parseFloat(found.lon),
+      display: found.display_name,
+      approximate: usedAttemptIndex > 0
+    };
     geocache[key] = result;
     saveGeocache();
     return result;
@@ -638,6 +677,7 @@
       html += `<div class="stop-item" style="cursor:default;">
         <div class="num" style="background:${isHome ? '#16a34a' : '#2563eb'}">${isHome ? '🏠' : i}</div>
         <div class="addr">${escapeHtml(p.address)}
+          ${p.approximate ? `<div class="meta" style="color:#92400e;">⚠ approximate match — double-check the pin on the map</div>` : ""}
           ${leg ? `<div class="meta">→ next: ${fmtDist(leg.distM)}, ${fmtTime(leg.durS)}</div>` : ""}
         </div>
       </div>`;
