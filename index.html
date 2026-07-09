@@ -152,6 +152,16 @@
         <button id="resetHomeBtn">Reset to default</button>
       </div>
       <p class="small">This is saved only in your browser (localStorage) — everyone who opens this app can set their own home base without affecting anyone else.</p>
+      <label for="homeLat" style="margin-top:6px;">Exact home coordinates (optional override)</label>
+      <div class="row">
+        <input type="text" id="homeLat" placeholder="Latitude, e.g. 41.2495097">
+        <input type="text" id="homeLon" placeholder="Longitude, e.g. -77.0515952">
+      </div>
+      <p class="small">If your address geocodes to the wrong spot (common for rural roads where the mailing city/zip differs from the map data), drop a pin's exact coordinates here and the app will use them instead of guessing from the address text.</p>
+      <div class="btn-row">
+        <button class="primary" id="saveHomeCoordsBtn">Save coordinates</button>
+        <button id="clearHomeCoordsBtn">Clear (use address lookup)</button>
+      </div>
       <hr style="margin:12px 0; border:none; border-top:1px solid var(--gray-border);">
       <label>Saved routes</label>
       <div id="savedRoutesList" class="small">No saved routes yet.</div>
@@ -215,13 +225,22 @@
   "use strict";
 
   const DEFAULT_HOME = "2113 Marydale Ave, Williamsport, PA 17701";
+  // Default pin dropped by Cade to confirm the exact spot after the address
+  // geocoded to the wrong township (USPS "Williamsport, PA 17701" vs. OSM's
+  // "Old Lycoming Township, PA 17702" for this road) — used unless overridden.
+  const DEFAULT_HOME_LAT = "41.24950966678693";
+  const DEFAULT_HOME_LON = "-77.05159524048027";
   const LS_HOME = "ro_home_address";
+  const LS_HOME_LAT = "ro_home_lat";
+  const LS_HOME_LON = "ro_home_lon";
   const LS_STOPS = "ro_stops";
   const LS_GEOCACHE = "ro_geocache_v1";
   const LS_SAVED_ROUTES = "ro_saved_routes";
 
   let stops = JSON.parse(localStorage.getItem(LS_STOPS) || "[]"); // [{address, label}]
   let homeAddress = localStorage.getItem(LS_HOME) || DEFAULT_HOME;
+  let homeLat = localStorage.getItem(LS_HOME_LAT) || (homeAddress === DEFAULT_HOME ? DEFAULT_HOME_LAT : "");
+  let homeLon = localStorage.getItem(LS_HOME_LON) || (homeAddress === DEFAULT_HOME ? DEFAULT_HOME_LON : "");
   let geocache = JSON.parse(localStorage.getItem(LS_GEOCACHE) || "{}"); // address -> {lat,lon,display}
   let lastResult = null; // {order: [addressObjs in order incl home], legs, totalDist, totalTime, roundTrip}
   let map, markersLayer, routeLayer;
@@ -231,13 +250,21 @@
   function saveStops() { localStorage.setItem(LS_STOPS, JSON.stringify(stops)); }
   function saveGeocache() { localStorage.setItem(LS_GEOCACHE, JSON.stringify(geocache)); }
   function saveHome() { localStorage.setItem(LS_HOME, homeAddress); }
+  function saveHomeCoords() {
+    if (homeLat) localStorage.setItem(LS_HOME_LAT, homeLat); else localStorage.removeItem(LS_HOME_LAT);
+    if (homeLon) localStorage.setItem(LS_HOME_LON, homeLon); else localStorage.removeItem(LS_HOME_LON);
+  }
 
   // ---------- UI: header / settings ----------
   const homeLine = document.getElementById("homeLine");
   const homeAddrInput = document.getElementById("homeAddr");
+  const homeLatInput = document.getElementById("homeLat");
+  const homeLonInput = document.getElementById("homeLon");
   function refreshHomeLine() {
-    homeLine.textContent = "Home base: " + homeAddress;
+    homeLine.textContent = "Home base: " + homeAddress + (homeLat && homeLon ? " 📍" : "");
     homeAddrInput.value = homeAddress;
+    homeLatInput.value = homeLat || "";
+    homeLonInput.value = homeLon || "";
   }
   refreshHomeLine();
 
@@ -247,6 +274,10 @@
   document.getElementById("saveHomeBtn").addEventListener("click", () => {
     const v = homeAddrInput.value.trim();
     if (!v) return;
+    if (v !== homeAddress) {
+      // Address text changed — clear any coordinate override since it no longer applies.
+      homeLat = ""; homeLon = ""; saveHomeCoords();
+    }
     homeAddress = v;
     saveHome();
     refreshHomeLine();
@@ -254,8 +285,28 @@
   });
   document.getElementById("resetHomeBtn").addEventListener("click", () => {
     homeAddress = DEFAULT_HOME;
+    homeLat = ""; homeLon = "";
     saveHome();
+    saveHomeCoords();
     refreshHomeLine();
+  });
+  document.getElementById("saveHomeCoordsBtn").addEventListener("click", () => {
+    const lat = parseFloat(homeLatInput.value.trim());
+    const lon = parseFloat(homeLonInput.value.trim());
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      setStatus("Enter valid latitude (-90 to 90) and longitude (-180 to 180).", "warn");
+      return;
+    }
+    homeLat = String(lat); homeLon = String(lon);
+    saveHomeCoords();
+    refreshHomeLine();
+    setStatus("Home coordinates saved — the address lookup will be skipped for home from now on.", "ok");
+  });
+  document.getElementById("clearHomeCoordsBtn").addEventListener("click", () => {
+    homeLat = ""; homeLon = "";
+    saveHomeCoords();
+    refreshHomeLine();
+    setStatus("Cleared. Home will be geocoded from the address text again.", "info");
   });
 
   // ---------- saved routes ----------
@@ -588,12 +639,17 @@
       const allAddrs = [homeAddress, ...stops.map(s => s.address)];
       const points = [];
       for (let i = 0; i < allAddrs.length; i++) {
+        // Home base uses a saved exact pin if one's set in Settings, skipping the lookup entirely.
+        if (i === 0 && homeLat && homeLon) {
+          points.push({ lat: parseFloat(homeLat), lon: parseFloat(homeLon), display: allAddrs[0], address: allAddrs[0], approximate: false });
+          continue;
+        }
         setStatus(`Geocoding ${i + 1} of ${allAddrs.length}: ${escapeHtml(allAddrs[i])}`, "info");
         try {
           const g = await geocodeAddress(allAddrs[i]);
           points.push({ ...g, address: allAddrs[i] });
         } catch (err) {
-          setStatus(`Could not locate "${allAddrs[i]}". Check spelling/city/state and try again.`, "error");
+          setStatus(`Could not locate "${allAddrs[i]}". Check spelling/city/state, or drop a pin's exact coordinates in Settings if this is the home address.`, "error");
           optimizeBtn.disabled = false;
           return;
         }
