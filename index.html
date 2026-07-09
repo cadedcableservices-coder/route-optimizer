@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Route Optimizer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root {
+    --blue: #2563eb;
+    --blue-dark: #1d4ed8;
+    --green: #16a34a;
+    --gray-bg: #f4f5f7;
+    --gray-border: #d8dce3;
+    --text: #1f2430;
+    --muted: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--gray-bg);
+    color: var(--text);
+  }
+  header {
+    background: #111827;
+    color: #fff;
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .home-line { font-size: 12.5px; color: #cbd5e1; }
+  .layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 16px;
+    padding: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--gray-border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 10px 0;
+  }
+  label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 4px; }
+  input[type=text], textarea, select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--gray-border);
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 90px; }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .row > * { flex: 1; }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 13.5px;
+    font-weight: 600;
+    background: #e5e7eb;
+    color: #1f2430;
+  }
+  button.primary { background: var(--blue); color: #fff; }
+  button.primary:hover { background: var(--blue-dark); }
+  button.green { background: var(--green); color: #fff; }
+  button.link { background: transparent; color: var(--blue); padding: 4px 6px; }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .stop-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--gray-border);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    background: #fafbfc;
+    cursor: grab;
+  }
+  .stop-item.dragging { opacity: 0.4; }
+  .stop-item .num {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    font-size: 11.5px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .stop-item .addr { flex: 1; font-size: 13.5px; word-break: break-word; }
+  .stop-item .meta { font-size: 11.5px; color: var(--muted); }
+  #map { height: 480px; border-radius: 10px; border: 1px solid var(--gray-border); }
+  .status { font-size: 13px; padding: 8px 10px; border-radius: 6px; margin-top: 8px; }
+  .status.info { background: #eff6ff; color: #1e40af; }
+  .status.warn { background: #fffbeb; color: #92400e; }
+  .status.error { background: #fef2f2; color: #991b1b; }
+  .status.ok { background: #f0fdf4; color: #166534; }
+  .totals { display: flex; gap: 20px; margin-bottom: 10px; }
+  .totals div { font-size: 13px; }
+  .totals b { font-size: 18px; display: block; }
+  .small { font-size: 12px; color: var(--muted); }
+  .toggle-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13.5px; }
+  .remove-x { background: transparent; color: #b91c1c; padding: 2px 8px; font-size: 15px; }
+  #settingsPanel { display: none; }
+  #settingsPanel.open { display: block; }
+  .gear { background: transparent; color: #fff; font-size: 18px; padding: 4px 8px; }
+  @media print {
+    header, .card:not(.print-card), #map { display: none !important; }
+    .print-card { display: block !important; border: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🧭 Route Optimizer</h1>
+    <div class="home-line" id="homeLine">Home base: —</div>
+  </div>
+  <button class="gear" id="settingsBtn" title="Settings">⚙ Settings</button>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="card" id="settingsPanel">
+      <h2>Settings</h2>
+      <label for="homeAddr">Home / starting address</label>
+      <input type="text" id="homeAddr" placeholder="e.g. 2113 Marydale Ave, Williamsport, PA 17701" />
+      <div class="btn-row">
+        <button class="primary" id="saveHomeBtn">Save home address</button>
+        <button id="resetHomeBtn">Reset to default</button>
+      </div>
+      <p class="small">This is saved only in your browser (localStorage) — everyone who opens this app can set their own home base without affecting anyone else.</p>
+      <hr style="margin:12px 0; border:none; border-top:1px solid var(--gray-border);">
+      <label>Saved routes</label>
+      <div id="savedRoutesList" class="small">No saved routes yet.</div>
+      <div class="btn-row">
+        <input type="text" id="saveRouteName" placeholder="Name this route (e.g. Tuesday route)" style="flex:2;">
+        <button id="saveRouteBtn" style="flex:1;">Save current</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Stops (work addresses)</h2>
+      <label for="bulkAddr">Paste addresses (one per line)</label>
+      <textarea id="bulkAddr" placeholder="123 Main St, Williamsport, PA&#10;456 Oak Ave, Montoursville, PA&#10;..."></textarea>
+      <div class="btn-row">
+        <button class="primary" id="addBulkBtn">Add to list</button>
+        <button id="clearAllBtn">Clear all stops</button>
+      </div>
+      <div class="toggle-row">
+        <input type="checkbox" id="roundTripToggle">
+        <label style="margin:0;" for="roundTripToggle">Return to home at the end (round trip)</label>
+      </div>
+      <div id="stopsList"></div>
+      <div class="btn-row">
+        <button class="green" id="optimizeBtn">🚀 Optimize Route</button>
+      </div>
+      <div id="statusBox"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Optimized order</h2>
+      <div class="totals" id="totalsBox" style="display:none;">
+        <div>Total distance<b id="totalDist">—</b></div>
+        <div>Est. drive time<b id="totalTime">—</b></div>
+        <div>Stops<b id="totalStops">—</b></div>
+      </div>
+      <div id="resultList" class="small">Add stops and click "Optimize Route".</div>
+      <div class="btn-row" id="exportRow" style="display:none;">
+        <button class="primary" id="gmapsBtn">📍 Open in Google Maps</button>
+        <button id="printBtn">🖨 Print / Save PDF</button>
+        <button id="copyBtn">📋 Copy list</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Map</h2>
+      <div id="map"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Printable version -->
+<div class="card print-card" style="display:none;">
+  <h2>Route</h2>
+  <div id="printList"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const DEFAULT_HOME = "2113 Marydale Ave, Williamsport, PA 17701";
+  const LS_HOME = "ro_home_address";
+  const LS_STOPS = "ro_stops";
+  const LS_GEOCACHE = "ro_geocache_v1";
+  const LS_SAVED_ROUTES = "ro_saved_routes";
+
+  let stops = JSON.parse(localStorage.getItem(LS_STOPS) || "[]"); // [{address, label}]
+  let homeAddress = localStorage.getItem(LS_HOME) || DEFAULT_HOME;
+  let geocache = JSON.parse(localStorage.getItem(LS_GEOCACHE) || "{}"); // address -> {lat,lon,display}
+  let lastResult = null; // {order: [addressObjs in order incl home], legs, totalDist, totalTime, roundTrip}
+  let map, markersLayer, routeLayer;
+  let dragSrcIndex = null;
+
+  // ---------- persistence helpers ----------
+  function saveStops() { localStorage.setItem(LS_STOPS, JSON.stringify(stops)); }
+  function saveGeocache() { localStorage.setItem(LS_GEOCACHE, JSON.stringify(geocache)); }
+  function saveHome() { localStorage.setItem(LS_HOME, homeAddress); }
+
+  // ---------- UI: header / settings ----------
+  const homeLine = document.getElementById("homeLine");
+  const homeAddrInput = document.getElementById("homeAddr");
+  function refreshHomeLine() {
+    homeLine.textContent = "Home base: " + homeAddress;
+    homeAddrInput.value = homeAddress;
+  }
+  refreshHomeLine();
+
+  document.getElementById("settingsBtn").addEventListener("click", () => {
+    document.getElementById("settingsPanel").classList.toggle("open");
+  });
+  document.getElementById("saveHomeBtn").addEventListener("click", () => {
+    const v = homeAddrInput.value.trim();
+    if (!v) return;
+    homeAddress = v;
+    saveHome();
+    refreshHomeLine();
+    setStatus("Home address saved.", "ok");
+  });
+  document.getElementById("resetHomeBtn").addEventListener("click", () => {
+    homeAddress = DEFAULT_HOME;
+    saveHome();
+    refreshHomeLine();
+  });
+
+  // ---------- saved routes ----------
+  function getSavedRoutes() { return JSON.parse(localStorage.getItem(LS_SAVED_ROUTES) || "{}"); }
+  function renderSavedRoutes() {
+    const box = document.getElementById("savedRoutesList");
+    const routes = getSavedRoutes();
+    const names = Object.keys(routes);
+    if (!names.length) { box.textContent = "No saved routes yet."; return; }
+    box.innerHTML = "";
+    names.forEach(name => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.alignItems = "center";
+      row.style.marginBottom = "4px";
+      const label = document.createElement("span");
+      label.textContent = name + " (" + routes[name].length + " stops)";
+      const btnWrap = document.createElement("span");
+      const loadBtn = document.createElement("button");
+      loadBtn.className = "link"; loadBtn.textContent = "Load";
+      loadBtn.onclick = () => {
+        stops = routes[name].map(s => ({ ...s }));
+        saveStops();
+        renderStops();
+        setStatus(`Loaded "${name}".`, "ok");
+      };
+      const delBtn = document.createElement("button");
+      delBtn.className = "link"; delBtn.style.color = "#b91c1c"; delBtn.textContent = "Delete";
+      delBtn.onclick = () => {
+        const r = getSavedRoutes();
+        delete r[name];
+        localStorage.setItem(LS_SAVED_ROUTES, JSON.stringify(r));
+        renderSavedRoutes();
+      };
+      btnWrap.appendChild(loadBtn); btnWrap.appendChild(delBtn);
+      row.appendChild(label); row.appendChild(btnWrap);
+      box.appendChild(row);
+    });
+  }
+  renderSavedRoutes();
+  document.getElementById("saveRouteBtn").addEventListener("click", () => {
+    const nameInput = document.getElementById("saveRouteName");
+    const name = nameInput.value.trim();
+    if (!name) { setStatus("Give the route a name first.", "warn"); return; }
+    if (!stops.length) { setStatus("No stops to save.", "warn"); return; }
+    const routes = getSavedRoutes();
+    routes[name] = stops.map(s => ({ ...s }));
+    localStorage.setItem(LS_SAVED_ROUTES, JSON.stringify(routes));
+    nameInput.value = "";
+    renderSavedRoutes();
+    setStatus(`Saved route "${name}".`, "ok");
+  });
+
+  // ---------- stops list UI ----------
+  const stopsListEl = document.getElementById("stopsList");
+  function renderStops() {
+    stopsListEl.innerHTML = "";
+    stops.forEach((s, i) => {
+      const item = document.createElement("div");
+      item.className = "stop-item";
+      item.draggable = true;
+      item.dataset.index = i;
+      item.innerHTML = `
+        <div class="num">${i + 1}</div>
+        <div class="addr">${escapeHtml(s.address)}</div>
+        <button class="remove-x" title="Remove">✕</button>
+      `;
+      item.querySelector(".remove-x").addEventListener("click", () => {
+        stops.splice(i, 1);
+        saveStops();
+        renderStops();
+      });
+      item.addEventListener("dragstart", () => { dragSrcIndex = i; item.classList.add("dragging"); });
+      item.addEventListener("dragend", () => { item.classList.remove("dragging"); });
+      item.addEventListener("dragover", (e) => e.preventDefault());
+      item.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const destIndex = i;
+        if (dragSrcIndex === null || dragSrcIndex === destIndex) return;
+        const moved = stops.splice(dragSrcIndex, 1)[0];
+        stops.splice(destIndex, 0, moved);
+        saveStops();
+        renderStops();
+      });
+      stopsListEl.appendChild(item);
+    });
+  }
+  renderStops();
+
+  document.getElementById("addBulkBtn").addEventListener("click", () => {
+    const ta = document.getElementById("bulkAddr");
+    const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
+    lines.forEach(l => stops.push({ address: l }));
+    ta.value = "";
+    saveStops();
+    renderStops();
+  });
+  document.getElementById("clearAllBtn").addEventListener("click", () => {
+    if (stops.length && !confirm("Clear all stops?")) return;
+    stops = [];
+    saveStops();
+    renderStops();
+    lastResult = null;
+    document.getElementById("resultList").innerHTML = "Add stops and click \"Optimize Route\".";
+    document.getElementById("totalsBox").style.display = "none";
+    document.getElementById("exportRow").style.display = "none";
+    clearMapLayers();
+  });
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ---------- status box ----------
+  function setStatus(msg, kind) {
+    const box = document.getElementById("statusBox");
+    box.innerHTML = `<div class="status ${kind || 'info'}">${msg}</div>`;
+  }
+  function clearStatus() { document.getElementById("statusBox").innerHTML = ""; }
+
+  // ---------- map ----------
+  function initMap() {
+    map = L.map("map").setView([41.2412, -76.9877], 11); // Williamsport, PA default view
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19
+    }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
+  }
+  function clearMapLayers() {
+    if (markersLayer) markersLayer.clearLayers();
+    if (routeLayer) routeLayer.clearLayers();
+  }
+  initMap();
+
+  // ---------- geocoding (Nominatim, no API key) ----------
+  async function geocodeAddress(address) {
+    const key = address.trim().toLowerCase();
+    if (geocache[key]) return geocache[key];
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" + encodeURIComponent(address);
+    const resp = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!resp.ok) throw new Error("Geocoding request failed for: " + address);
+    const data = await resp.json();
+    if (!data || !data.length) throw new Error("Could not find location for: " + address);
+    const result = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), display: data[0].display_name };
+    geocache[key] = result;
+    saveGeocache();
+    return result;
+  }
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ---------- distance helpers ----------
+  function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = (b.lat - a.lat) * Math.PI / 180;
+    const dLon = (b.lon - a.lon) * Math.PI / 180;
+    const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  async function buildMatrix(points) {
+    // Try OSRM public table service (free, no key). Falls back to haversine.
+    const coordStr = points.map(p => `${p.lon},${p.lat}`).join(";");
+    const url = `https://router.project-osrm.org/table/v1/driving/${coordStr}?annotations=duration,distance`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("OSRM table request failed");
+      const data = await resp.json();
+      if (data.code !== "Ok") throw new Error("OSRM table error: " + data.code);
+      return { distances: data.distances, durations: data.durations, source: "osrm" }; // meters, seconds
+    } catch (e) {
+      // Fallback: haversine distance, assume 40 km/h average urban/rural blended speed
+      const n = points.length;
+      const distances = Array.from({ length: n }, () => new Array(n).fill(0));
+      const durations = Array.from({ length: n }, () => new Array(n).fill(0));
+      const avgSpeedKmh = 40;
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (i === j) continue;
+          const km = haversineKm(points[i], points[j]) * 1.25; // fudge factor for real road winding
+          distances[i][j] = km * 1000;
+          durations[i][j] = (km / avgSpeedKmh) * 3600;
+        }
+      }
+      return { distances, durations, source: "haversine-fallback" };
+    }
+  }
+
+  async function getRouteGeometry(points) {
+    // Real road-following geometry for the final ordered route (for map drawing only).
+    const coordStr = points.map(p => `${p.lon},${p.lat}`).join(";");
+    const url = `https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("fail");
+      const data = await resp.json();
+      if (data.code !== "Ok") throw new Error("fail");
+      return data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]); // to [lat,lon]
+    } catch (e) {
+      return null; // caller falls back to straight lines
+    }
+  }
+
+  // ---------- TSP solver (tested standalone; see test-tsp.js) ----------
+  function heldKarp(dist, cycle) {
+    const n = dist.length;
+    const m = n - 1;
+    if (m === 0) return { order: [0], cost: 0 };
+    const FULL = (1 << m) - 1;
+    const dp = Array.from({ length: 1 << m }, () => new Array(m).fill(Infinity));
+    const parent = Array.from({ length: 1 << m }, () => new Array(m).fill(-1));
+    for (let j = 0; j < m; j++) dp[1 << j][j] = dist[0][j + 1];
+    for (let mask = 1; mask <= FULL; mask++) {
+      for (let j = 0; j < m; j++) {
+        if (!(mask & (1 << j))) continue;
+        const cur = dp[mask][j];
+        if (cur === Infinity) continue;
+        for (let k = 0; k < m; k++) {
+          if (mask & (1 << k)) continue;
+          const nmask = mask | (1 << k);
+          const ncost = cur + dist[j + 1][k + 1];
+          if (ncost < dp[nmask][k]) { dp[nmask][k] = ncost; parent[nmask][k] = j; }
+        }
+      }
+    }
+    let best = Infinity, bestJ = -1;
+    for (let j = 0; j < m; j++) {
+      const c = dp[FULL][j] + (cycle ? dist[j + 1][0] : 0);
+      if (c < best) { best = c; bestJ = j; }
+    }
+    const order = [];
+    let mask = FULL, j = bestJ;
+    while (j !== -1) { order.push(j + 1); const pj = parent[mask][j]; mask &= ~(1 << j); j = pj; }
+    order.reverse();
+    return { order: [0, ...order], cost: best };
+  }
+  function pathCost(dist, order, cycle) {
+    let c = 0;
+    for (let i = 0; i < order.length - 1; i++) c += dist[order[i]][order[i + 1]];
+    if (cycle) c += dist[order[order.length - 1]][order[0]];
+    return c;
+  }
+  function nearestNeighbor(dist) {
+    const n = dist.length;
+    const visited = new Array(n).fill(false);
+    visited[0] = true;
+    const order = [0];
+    let cur = 0;
+    for (let step = 1; step < n; step++) {
+      let best = -1, bestD = Infinity;
+      for (let k = 0; k < n; k++) if (!visited[k] && dist[cur][k] < bestD) { bestD = dist[cur][k]; best = k; }
+      visited[best] = true; order.push(best); cur = best;
+    }
+    return order;
+  }
+  function twoOpt(dist, order, cycle) {
+    let improved = true;
+    let best = order.slice();
+    let bestCost = pathCost(dist, best, cycle);
+    while (improved) {
+      improved = false;
+      for (let i = 1; i < best.length - 1; i++) {
+        for (let k = i + 1; k < best.length; k++) {
+          const cand = best.slice(0, i).concat(best.slice(i, k + 1).reverse(), best.slice(k + 1));
+          const cCost = pathCost(dist, cand, cycle);
+          if (cCost < bestCost - 1e-6) { best = cand; bestCost = cCost; improved = true; }
+        }
+      }
+    }
+    return { order: best, cost: bestCost };
+  }
+  function solveTSP(dist, cycle) {
+    const m = dist.length - 1;
+    if (m <= 12) return heldKarp(dist, cycle);
+    return twoOpt(dist, nearestNeighbor(dist), cycle);
+  }
+
+  // ---------- main optimize flow ----------
+  document.getElementById("optimizeBtn").addEventListener("click", optimizeRoute);
+
+  async function optimizeRoute() {
+    if (!stops.length) { setStatus("Add at least one stop first.", "warn"); return; }
+    const optimizeBtn = document.getElementById("optimizeBtn");
+    optimizeBtn.disabled = true;
+    clearStatus();
+    try {
+      setStatus("Looking up addresses (this respects the free geocoder's rate limit, ~1/sec)...", "info");
+      const allAddrs = [homeAddress, ...stops.map(s => s.address)];
+      const points = [];
+      for (let i = 0; i < allAddrs.length; i++) {
+        setStatus(`Geocoding ${i + 1} of ${allAddrs.length}: ${escapeHtml(allAddrs[i])}`, "info");
+        try {
+          const g = await geocodeAddress(allAddrs[i]);
+          points.push({ ...g, address: allAddrs[i] });
+        } catch (err) {
+          setStatus(`Could not locate "${allAddrs[i]}". Check spelling/city/state and try again.`, "error");
+          optimizeBtn.disabled = false;
+          return;
+        }
+        await sleep(1100); // be polite to the free Nominatim service
+      }
+
+      setStatus("Calculating drive times between every stop...", "info");
+      const matrix = await buildMatrix(points);
+      const cycle = document.getElementById("roundTripToggle").checked;
+
+      setStatus("Finding the most efficient order...", "info");
+      const solved = solveTSP(matrix.distances, cycle);
+      const orderIdx = solved.order;
+
+      // build legs
+      const legs = [];
+      let totalDist = 0, totalTime = 0;
+      for (let i = 0; i < orderIdx.length - 1; i++) {
+        const a = orderIdx[i], b = orderIdx[i + 1];
+        legs.push({ from: points[a], to: points[b], distM: matrix.distances[a][b], durS: matrix.durations[a][b] });
+        totalDist += matrix.distances[a][b];
+        totalTime += matrix.durations[a][b];
+      }
+      if (cycle) {
+        const a = orderIdx[orderIdx.length - 1], b = orderIdx[0];
+        legs.push({ from: points[a], to: points[b], distM: matrix.distances[a][b], durS: matrix.durations[a][b] });
+        totalDist += matrix.distances[a][b];
+        totalTime += matrix.durations[a][b];
+      }
+
+      const orderedPoints = orderIdx.map(i => points[i]);
+      lastResult = { orderedPoints, legs, totalDist, totalTime, cycle, matrixSource: matrix.source };
+
+      renderResult();
+
+      if (matrix.source === "haversine-fallback") {
+        setStatus("Route optimized. Note: the live driving-route service was unreachable, so distances/times are straight-line estimates (order is still optimized).", "warn");
+      } else {
+        setStatus("Route optimized using real driving distances.", "ok");
+      }
+
+      setStatus2Combined();
+
+      await drawMap(orderedPoints, cycle);
+    } catch (e) {
+      console.error(e);
+      setStatus("Something went wrong optimizing the route: " + e.message, "error");
+    } finally {
+      optimizeBtn.disabled = false;
+    }
+  }
+
+  function setStatus2Combined() { /* placeholder kept for readability of flow; status already set above */ }
+
+  function fmtDist(meters) {
+    const miles = meters / 1609.344;
+    return miles.toFixed(1) + " mi";
+  }
+  function fmtTime(seconds) {
+    const mins = Math.round(seconds / 60);
+    if (mins < 60) return mins + " min";
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return h + "h " + m + "m";
+  }
+
+  function renderResult() {
+    const resultList = document.getElementById("resultList");
+    const totalsBox = document.getElementById("totalsBox");
+    const exportRow = document.getElementById("exportRow");
+    if (!lastResult) return;
+    totalsBox.style.display = "flex";
+    document.getElementById("totalDist").textContent = fmtDist(lastResult.totalDist);
+    document.getElementById("totalTime").textContent = fmtTime(lastResult.totalTime);
+    document.getElementById("totalStops").textContent = stops.length;
+    exportRow.style.display = "flex";
+
+    let html = "";
+    lastResult.orderedPoints.forEach((p, i) => {
+      const isHome = i === 0;
+      const leg = lastResult.legs[i]; // leg leaving this point (undefined for last if one-way)
+      html += `<div class="stop-item" style="cursor:default;">
+        <div class="num" style="background:${isHome ? '#16a34a' : '#2563eb'}">${isHome ? '🏠' : i}</div>
+        <div class="addr">${escapeHtml(p.address)}
+          ${leg ? `<div class="meta">→ next: ${fmtDist(leg.distM)}, ${fmtTime(leg.durS)}</div>` : ""}
+        </div>
+      </div>`;
+    });
+    if (lastResult.cycle) {
+      html += `<div class="small">Ends back at home.</div>`;
+    } else {
+      html += `<div class="small">Ends at the last stop (one-way — no return leg).</div>`;
+    }
+    resultList.innerHTML = html;
+
+    document.getElementById("printList").innerHTML =
+      "<ol>" + lastResult.orderedPoints.map(p => `<li>${escapeHtml(p.address)}</li>`).join("") + "</ol>" +
+      `<p>Total distance: ${fmtDist(lastResult.totalDist)} — Est. time: ${fmtTime(lastResult.totalTime)}</p>`;
+  }
+
+  async function drawMap(orderedPoints, cycle) {
+    clearMapLayers();
+    const latlngs = orderedPoints.map(p => [p.lat, p.lon]);
+    orderedPoints.forEach((p, i) => {
+      const isHome = i === 0;
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="background:${isHome ? '#16a34a' : '#2563eb'};color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);">${isHome ? "H" : i}</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13]
+      });
+      L.marker([p.lat, p.lon], { icon }).addTo(markersLayer).bindPopup(escapeHtml(p.address));
+    });
+
+    const routeCoords = cycle ? [...orderedPoints, orderedPoints[0]] : orderedPoints;
+    const geom = await getRouteGeometry(routeCoords);
+    if (geom) {
+      L.polyline(geom, { color: "#2563eb", weight: 4, opacity: 0.8 }).addTo(routeLayer);
+    } else {
+      const straight = routeCoords.map(p => [p.lat, p.lon]);
+      L.polyline(straight, { color: "#2563eb", weight: 3, opacity: 0.7, dashArray: "6,6" }).addTo(routeLayer);
+    }
+    const bounds = L.latLngBounds(latlngs);
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }
+
+  // ---------- exports ----------
+  document.getElementById("printBtn").addEventListener("click", () => window.print());
+  document.getElementById("copyBtn").addEventListener("click", () => {
+    if (!lastResult) return;
+    const text = lastResult.orderedPoints.map((p, i) => `${i === 0 ? "Start" : i + "."} ${p.address}`).join("\n");
+    navigator.clipboard.writeText(text).then(() => setStatus("Route copied to clipboard.", "ok"));
+  });
+  document.getElementById("gmapsBtn").addEventListener("click", () => {
+    if (!lastResult) return;
+    const pts = lastResult.orderedPoints;
+    const origin = encodeURIComponent(pts[0].address);
+    let destination, waypoints;
+    if (lastResult.cycle) {
+      destination = origin;
+      waypoints = pts.slice(1).map(p => encodeURIComponent(p.address));
+    } else {
+      destination = encodeURIComponent(pts[pts.length - 1].address);
+      waypoints = pts.slice(1, -1).map(p => encodeURIComponent(p.address));
+    }
+    if (waypoints.length > 9) {
+      setStatus("Heads up: Google Maps' free link only supports ~9 stops in between. The map above still shows your full optimized route.", "warn");
+    }
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}` +
+      (waypoints.length ? `&waypoints=${waypoints.join("|")}` : "") + `&travelmode=driving`;
+    window.open(url, "_blank");
+  });
+
+})();
+</script>
+</body>
+</html>
