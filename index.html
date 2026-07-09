@@ -3,17 +3,21 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Route Optimizer</title>
+<title>Cable Services — Route Optimizer</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <style>
   :root {
-    --blue: #2563eb;
-    --blue-dark: #1d4ed8;
+    /* Cable Services Company brand palette, pulled from the flyer: near-black
+       shell, steel-blue accent, white type. */
+    --blue: #4f87ae;
+    --blue-dark: #3a6a89;
+    --blue-light: #7cb0d1;
     --green: #16a34a;
-    --gray-bg: #f4f5f7;
+    --gray-bg: #0b0e13;
     --gray-border: #d8dce3;
     --text: #1f2430;
     --muted: #6b7280;
+    --shell-black: #05070a;
   }
   * { box-sizing: border-box; }
   body {
@@ -23,17 +27,25 @@
     color: var(--text);
   }
   header {
-    background: #111827;
+    background: var(--shell-black);
     color: #fff;
-    padding: 14px 20px;
+    padding: 16px 20px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
   }
-  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
-  header .home-line { font-size: 12.5px; color: #cbd5e1; }
+  header .brand { display: flex; align-items: center; gap: 12px; }
+  header .brand-logo { flex-shrink: 0; }
+  header .brand-text { display: flex; flex-direction: column; gap: 2px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+  header .app-name { font-size: 12px; color: var(--blue-light); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+  header .home-line { font-size: 12.5px; color: #cbd5e1; margin-top: 2px; }
+  .brand-stripes { background: var(--shell-black); display: flex; flex-direction: column; gap: 3px; padding: 10px 20px 14px; }
+  .brand-stripes div { height: 3px; }
+  .brand-stripes div:nth-child(1) { background: #fff; }
+  .brand-stripes div:nth-child(n+2) { background: var(--blue); }
   .layout {
     display: grid;
     grid-template-columns: 380px 1fr;
@@ -99,12 +111,14 @@
     cursor: grab;
   }
   .stop-item.dragging { opacity: 0.4; }
+  /* Hexagon badges echo the hex icon tiles on the Cable Services flyer. */
   .stop-item .num {
-    width: 22px; height: 22px;
-    border-radius: 50%;
+    width: 24px; height: 24px;
+    clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%);
     background: var(--blue);
     color: #fff;
     font-size: 11.5px;
+    font-weight: 700;
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
@@ -126,7 +140,7 @@
   #settingsPanel.open { display: block; }
   .gear { background: transparent; color: #fff; font-size: 18px; padding: 4px 8px; }
   @media print {
-    header, .card:not(.print-card), #map { display: none !important; }
+    header, .brand-stripes, .card:not(.print-card), #map { display: none !important; }
     .print-card { display: block !important; border: none; }
   }
 </style>
@@ -134,12 +148,23 @@
 <body>
 
 <header>
-  <div>
-    <h1>🧭 Route Optimizer</h1>
-    <div class="home-line" id="homeLine">Home base: —</div>
+  <div class="brand">
+    <svg class="brand-logo" width="34" height="46" viewBox="0 0 60 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Stylized recreation of the Cable Services Co. mark: a simple stroked
+           figure with arms out and legs apart, echoing the flyer's logo. -->
+      <circle cx="30" cy="12" r="10" fill="none" stroke="#fff" stroke-width="6"/>
+      <path d="M30 22 L30 40 M30 26 L10 14 M30 26 L50 14 M30 40 L14 74 M30 40 L46 74"
+            fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="brand-text">
+      <span class="app-name">Cable Services Company</span>
+      <h1>Route Optimizer</h1>
+      <div class="home-line" id="homeLine">Home base: —</div>
+    </div>
   </div>
   <button class="gear" id="settingsBtn" title="Settings">⚙ Settings</button>
 </header>
+<div class="brand-stripes"><div></div><div></div><div></div><div></div><div></div></div>
 
 <div class="layout">
   <div>
@@ -865,7 +890,7 @@
       const isHome = i === 0;
       const leg = lastResult.legs[i]; // leg leaving this point (undefined for last if one-way)
       html += `<div class="stop-item" style="cursor:default;${p.far ? "border-color:#dc2626;" : ""}">
-        <div class="num" style="background:${isHome ? '#16a34a' : (p.far ? '#dc2626' : '#2563eb')}">${isHome ? '🏠' : i}</div>
+        <div class="num" style="background:${isHome ? '#16a34a' : (p.far ? '#dc2626' : '#4f87ae')}">${isHome ? '🏠' : i}</div>
         <div class="addr">${escapeHtml(p.address)}
           ${p.far ? `<div class="meta" style="color:#991b1b;">🚩 unusually far from home — likely a mismatched street name, verify or use exact coordinates</div>`
             : (p.approximate ? `<div class="meta" style="color:#92400e;">⚠ approximate match — double-check the pin on the map</div>` : "")}
@@ -892,9 +917,9 @@
       const isHome = i === 0;
       const icon = L.divIcon({
         className: "",
-        html: `<div style="background:${isHome ? '#16a34a' : '#2563eb'};color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);">${isHome ? "H" : i}</div>`,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13]
+        html: `<div style="background:${isHome ? '#16a34a' : '#4f87ae'};color:#fff;clip-path:polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%);width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.5);">${isHome ? "H" : i}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
       });
       L.marker([p.lat, p.lon], { icon }).addTo(markersLayer).bindPopup(escapeHtml(p.address));
     });
@@ -902,10 +927,10 @@
     const routeCoords = cycle ? [...orderedPoints, orderedPoints[0]] : orderedPoints;
     const geom = await getRouteGeometry(routeCoords);
     if (geom) {
-      L.polyline(geom, { color: "#2563eb", weight: 4, opacity: 0.8 }).addTo(routeLayer);
+      L.polyline(geom, { color: "#4f87ae", weight: 4, opacity: 0.85 }).addTo(routeLayer);
     } else {
       const straight = routeCoords.map(p => [p.lat, p.lon]);
-      L.polyline(straight, { color: "#2563eb", weight: 3, opacity: 0.7, dashArray: "6,6" }).addTo(routeLayer);
+      L.polyline(straight, { color: "#4f87ae", weight: 3, opacity: 0.75, dashArray: "6,6" }).addTo(routeLayer);
     }
     const bounds = L.latLngBounds(latlngs);
     map.fitBounds(bounds, { padding: [30, 30] });
