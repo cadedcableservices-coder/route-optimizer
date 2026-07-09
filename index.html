@@ -163,6 +163,14 @@
         <button id="clearHomeCoordsBtn">Clear (use address lookup)</button>
       </div>
       <hr style="margin:12px 0; border:none; border-top:1px solid var(--gray-border);">
+      <label>Home locations (for multiple shops/branches)</label>
+      <div id="homeLocationsList" class="small">No saved home locations yet.</div>
+      <div class="btn-row">
+        <input type="text" id="saveHomeLocName" placeholder="Name this location (e.g. Williamsport Shop)" style="flex:2;">
+        <button id="saveHomeLocBtn" style="flex:1;">Save current as...</button>
+      </div>
+      <p class="small">Save the address/coordinates above under a name, then switch between them with one click — handy if you (or Kurt) work out of more than one location.</p>
+      <hr style="margin:12px 0; border:none; border-top:1px solid var(--gray-border);">
       <label>Saved routes</label>
       <div id="savedRoutesList" class="small">No saved routes yet.</div>
       <div class="btn-row">
@@ -174,7 +182,8 @@
     <div class="card">
       <h2>Stops (work addresses)</h2>
       <label for="bulkAddr">Paste addresses (one per line)</label>
-      <textarea id="bulkAddr" placeholder="123 Main St, Williamsport, PA&#10;456 Oak Ave, Montoursville, PA&#10;..."></textarea>
+      <textarea id="bulkAddr" placeholder="123 Main St, Williamsport, PA&#10;456 Oak Ave, Montoursville, PA&#10;41.2495, -77.0516 | Warehouse&#10;..."></textarea>
+      <p class="small">You can also paste exact coordinates instead of an address — one per line, as <code>lat, lon</code> or <code>lat, lon | a label</code>. Coordinates skip lookup entirely, so they're the most reliable option for any spot the map ever gets wrong.</p>
       <div class="btn-row">
         <button class="primary" id="addBulkBtn">Add to list</button>
         <button id="clearAllBtn">Clear all stops</button>
@@ -236,6 +245,22 @@
   const LS_STOPS = "ro_stops";
   const LS_GEOCACHE = "ro_geocache_v1";
   const LS_SAVED_ROUTES = "ro_saved_routes";
+  const LS_HOME_LOCATIONS = "ro_home_locations";
+  // How far (km) a resolved stop can be from home before we flag it as a likely
+  // mismatch. Cade's shop and stops are all local — anything this far off is
+  // almost certainly the geocoder matching a same-named street in another part
+  // of the state rather than a real long drive.
+  const FAR_KM = 130; // ~80 miles
+  // Matches a bare "lat,lon" or "lat, lon | Label" line so coordinates can be
+  // pasted directly instead of an address, skipping geocoding entirely.
+  const COORD_LINE_RE = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*(?:\|\s*(.*))?$/;
+  function parseCoordinateLine(line) {
+    const m = line.match(COORD_LINE_RE);
+    if (!m) return null;
+    const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return { lat, lon, label: (m[3] || "").trim() };
+  }
 
   let stops = JSON.parse(localStorage.getItem(LS_STOPS) || "[]"); // [{address, label}]
   let homeAddress = localStorage.getItem(LS_HOME) || DEFAULT_HOME;
@@ -309,6 +334,59 @@
     setStatus("Cleared. Home will be geocoded from the address text again.", "info");
   });
 
+  // ---------- home locations (named presets, for switching between shops/branches) ----------
+  function getHomeLocations() { return JSON.parse(localStorage.getItem(LS_HOME_LOCATIONS) || "{}"); }
+  function renderHomeLocations() {
+    const box = document.getElementById("homeLocationsList");
+    const locs = getHomeLocations();
+    const names = Object.keys(locs);
+    if (!names.length) { box.textContent = "No saved home locations yet."; return; }
+    box.innerHTML = "";
+    names.forEach(name => {
+      const loc = locs[name];
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.justifyContent = "space-between";
+      row.style.alignItems = "center";
+      row.style.marginBottom = "4px";
+      const label = document.createElement("span");
+      label.textContent = name + (loc.lat ? " 📍" : "");
+      const btnWrap = document.createElement("span");
+      const useBtn = document.createElement("button");
+      useBtn.className = "link"; useBtn.textContent = "Use";
+      useBtn.onclick = () => {
+        homeAddress = loc.address;
+        homeLat = loc.lat || ""; homeLon = loc.lon || "";
+        saveHome(); saveHomeCoords();
+        refreshHomeLine();
+        setStatus(`Switched home base to "${name}".`, "ok");
+      };
+      const delBtn = document.createElement("button");
+      delBtn.className = "link"; delBtn.style.color = "#b91c1c"; delBtn.textContent = "Delete";
+      delBtn.onclick = () => {
+        const l = getHomeLocations();
+        delete l[name];
+        localStorage.setItem(LS_HOME_LOCATIONS, JSON.stringify(l));
+        renderHomeLocations();
+      };
+      btnWrap.appendChild(useBtn); btnWrap.appendChild(delBtn);
+      row.appendChild(label); row.appendChild(btnWrap);
+      box.appendChild(row);
+    });
+  }
+  renderHomeLocations();
+  document.getElementById("saveHomeLocBtn").addEventListener("click", () => {
+    const nameInput = document.getElementById("saveHomeLocName");
+    const name = nameInput.value.trim();
+    if (!name) { setStatus("Give this home location a name first.", "warn"); return; }
+    const locs = getHomeLocations();
+    locs[name] = { address: homeAddress, lat: homeLat || null, lon: homeLon || null };
+    localStorage.setItem(LS_HOME_LOCATIONS, JSON.stringify(locs));
+    nameInput.value = "";
+    renderHomeLocations();
+    setStatus(`Saved "${name}" as a home location.`, "ok");
+  });
+
   // ---------- saved routes ----------
   function getSavedRoutes() { return JSON.parse(localStorage.getItem(LS_SAVED_ROUTES) || "{}"); }
   function renderSavedRoutes() {
@@ -372,7 +450,7 @@
       item.dataset.index = i;
       item.innerHTML = `
         <div class="num">${i + 1}</div>
-        <div class="addr">${escapeHtml(s.address)}</div>
+        <div class="addr">${escapeHtml(s.address)}${(s.lat != null && s.lon != null) ? ' <span title="Exact coordinates — lookup skipped">📍</span>' : ""}</div>
         <button class="remove-x" title="Remove">✕</button>
       `;
       item.querySelector(".remove-x").addEventListener("click", () => {
@@ -400,7 +478,14 @@
   document.getElementById("addBulkBtn").addEventListener("click", () => {
     const ta = document.getElementById("bulkAddr");
     const lines = ta.value.split("\n").map(l => l.trim()).filter(Boolean);
-    lines.forEach(l => stops.push({ address: l }));
+    lines.forEach(l => {
+      const coord = parseCoordinateLine(l);
+      if (coord) {
+        stops.push({ address: coord.label || `${coord.lat}, ${coord.lon}`, lat: coord.lat, lon: coord.lon });
+      } else {
+        stops.push({ address: l });
+      }
+    });
     ta.value = "";
     saveStops();
     renderStops();
@@ -444,6 +529,16 @@
   }
   initMap();
 
+  // ---------- distance helpers (defined early — geocoding needs this for the "far match" check) ----------
+  function haversineKm(a, b) {
+    const R = 6371;
+    const dLat = (b.lat - a.lat) * Math.PI / 180;
+    const dLon = (b.lon - a.lon) * Math.PI / 180;
+    const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
   // ---------- geocoding (Nominatim, no API key) ----------
   // Rural PA (and many other) addresses often carry a USPS mailing city/zip that
   // differs from the actual township/city OpenStreetMap has the road tagged under
@@ -452,17 +547,34 @@
   // fail to match even though the street is in OSM's data. To stay smart about
   // this without an API key, we retry with progressively simplified queries and
   // flag the result as "approximate" whenever we had to drop the zip/city to find it.
-  async function nominatimSearch(q) {
-    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" + encodeURIComponent(q);
+  //
+  // Second problem: a short/common street name ("Main St", "4th St") can match a
+  // same-named street clear across the state if the city/zip on the query gets
+  // dropped or mistyped — that's what sent a route to southeastern PA when every
+  // stop was actually local. To stop that, every lookup after the first stop is
+  // "biased" toward a bounding box around home (bounded=1&viewbox=...), so a local
+  // match is tried first. Only if nothing turns up inside that box do we fall back
+  // to an unbounded search — and if THAT result lands unreasonably far from home,
+  // it gets flagged "far" so it's obvious in the UI instead of silently wrong.
+  function viewboxAround(center, marginDeg) {
+    return `${center.lon - marginDeg},${center.lat + marginDeg},${center.lon + marginDeg},${center.lat - marginDeg}`;
+  }
+  async function nominatimSearch(q, biasCenter) {
+    let url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=" + encodeURIComponent(q);
+    if (biasCenter) {
+      // ~0.9 degrees latitude is roughly 60 miles — generous enough for a real
+      // work route, tight enough to exclude "same street name, other city".
+      url += "&viewbox=" + viewboxAround(biasCenter, 0.9) + "&bounded=1";
+    }
     const resp = await fetch(url, { headers: { "Accept": "application/json" } });
     if (!resp.ok) throw new Error("network");
     const data = await resp.json();
     return (data && data.length) ? data[0] : null;
   }
 
-  async function geocodeAddress(address) {
-    const key = address.trim().toLowerCase();
-    if (geocache[key]) return geocache[key];
+  async function geocodeAddress(address, biasCenter) {
+    const cacheKey = address.trim().toLowerCase() + (biasCenter ? `@${biasCenter.lat.toFixed(2)},${biasCenter.lon.toFixed(2)}` : "");
+    if (geocache[cacheKey]) return geocache[cacheKey];
 
     const attempts = [address];
     // Drop a trailing ZIP (5-digit or ZIP+4) — common source of city/zip mismatch.
@@ -475,39 +587,46 @@
       attempts.push(streetAndState);
     }
 
-    let found = null, usedAttemptIndex = -1;
-    for (let i = 0; i < attempts.length; i++) {
-      try {
-        found = await nominatimSearch(attempts[i]);
-      } catch (e) {
-        found = null;
+    async function tryAttempts(useBias) {
+      for (let i = 0; i < attempts.length; i++) {
+        let hit = null;
+        try {
+          hit = await nominatimSearch(attempts[i], useBias ? biasCenter : null);
+        } catch (e) {
+          hit = null;
+        }
+        if (hit) return { hit, attemptIndex: i };
+        if (i < attempts.length - 1) await sleep(1100); // stay polite to the free geocoder between retries
       }
-      if (found) { usedAttemptIndex = i; break; }
-      if (i < attempts.length - 1) await sleep(1100); // stay polite to the free geocoder between retries
+      return null;
     }
-    if (!found) throw new Error("Could not find location for: " + address);
+
+    // Phase 1: search close to home first, if we have a home fix to bias against.
+    let outcome = biasCenter ? await tryAttempts(true) : null;
+    let far = false;
+    if (!outcome) {
+      // Phase 2: nothing nearby matched — fall back to an unbounded search.
+      if (biasCenter) await sleep(1100);
+      outcome = await tryAttempts(false);
+      if (outcome && biasCenter) {
+        const d = haversineKm(biasCenter, { lat: parseFloat(outcome.hit.lat), lon: parseFloat(outcome.hit.lon) });
+        far = d > FAR_KM;
+      }
+    }
+    if (!outcome) throw new Error("Could not find location for: " + address);
 
     const result = {
-      lat: parseFloat(found.lat),
-      lon: parseFloat(found.lon),
-      display: found.display_name,
-      approximate: usedAttemptIndex > 0
+      lat: parseFloat(outcome.hit.lat),
+      lon: parseFloat(outcome.hit.lon),
+      display: outcome.hit.display_name,
+      approximate: outcome.attemptIndex > 0 || far,
+      far
     };
-    geocache[key] = result;
+    geocache[cacheKey] = result;
     saveGeocache();
     return result;
   }
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  // ---------- distance helpers ----------
-  function haversineKm(a, b) {
-    const R = 6371;
-    const dLat = (b.lat - a.lat) * Math.PI / 180;
-    const dLon = (b.lon - a.lon) * Math.PI / 180;
-    const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-  }
 
   async function buildMatrix(points) {
     // Try OSRM public table service (free, no key). Falls back to haversine.
@@ -636,25 +755,34 @@
     clearStatus();
     try {
       setStatus("Looking up addresses (this respects the free geocoder's rate limit, ~1/sec)...", "info");
-      const allAddrs = [homeAddress, ...stops.map(s => s.address)];
+      // Home first (so its resolved position can bias/anchor every stop lookup that follows),
+      // then each stop — using its own lat/lon directly when one was pasted instead of an address.
+      const entries = [
+        { address: homeAddress, lat: (homeLat && homeLon) ? parseFloat(homeLat) : null, lon: (homeLat && homeLon) ? parseFloat(homeLon) : null },
+        ...stops.map(s => ({ address: s.address, lat: s.lat != null ? s.lat : null, lon: s.lon != null ? s.lon : null }))
+      ];
       const points = [];
-      for (let i = 0; i < allAddrs.length; i++) {
-        // Home base uses a saved exact pin if one's set in Settings, skipping the lookup entirely.
-        if (i === 0 && homeLat && homeLon) {
-          points.push({ lat: parseFloat(homeLat), lon: parseFloat(homeLon), display: allAddrs[0], address: allAddrs[0], approximate: false });
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry.lat != null && entry.lon != null) {
+          // Exact coordinates given (home override or a pasted "lat,lon" stop) — no lookup needed.
+          points.push({ lat: entry.lat, lon: entry.lon, display: entry.address, address: entry.address, approximate: false, far: false });
           continue;
         }
-        setStatus(`Geocoding ${i + 1} of ${allAddrs.length}: ${escapeHtml(allAddrs[i])}`, "info");
+        setStatus(`Geocoding ${i + 1} of ${entries.length}: ${escapeHtml(entry.address)}`, "info");
         try {
-          const g = await geocodeAddress(allAddrs[i]);
-          points.push({ ...g, address: allAddrs[i] });
+          const biasCenter = i > 0 ? points[0] : null; // anchor every stop search near home
+          const g = await geocodeAddress(entry.address, biasCenter);
+          points.push({ ...g, address: entry.address });
         } catch (err) {
-          setStatus(`Could not locate "${allAddrs[i]}". Check spelling/city/state, or drop a pin's exact coordinates in Settings if this is the home address.`, "error");
+          setStatus(`Could not locate "${entry.address}". Check spelling/city/state, or paste exact coordinates instead (see the tip above the stop list).`, "error");
           optimizeBtn.disabled = false;
           return;
         }
         await sleep(1100); // be polite to the free Nominatim service
       }
+
+      const farOnes = points.filter(p => p.far);
 
       setStatus("Calculating drive times between every stop...", "info");
       const matrix = await buildMatrix(points);
@@ -685,13 +813,16 @@
 
       renderResult();
 
+      const statusParts = [];
       if (matrix.source === "haversine-fallback") {
-        setStatus("Route optimized. Note: the live driving-route service was unreachable, so distances/times are straight-line estimates (order is still optimized).", "warn");
+        statusParts.push("Route optimized. Note: the live driving-route service was unreachable, so distances/times are straight-line estimates (order is still optimized).");
       } else {
-        setStatus("Route optimized using real driving distances.", "ok");
+        statusParts.push("Route optimized using real driving distances.");
       }
-
-      setStatus2Combined();
+      if (farOnes.length) {
+        statusParts.push(`⚠ ${farOnes.map(p => `"${escapeHtml(p.address)}"`).join(", ")} resolved unusually far from home (${Math.round(FAR_KM * 0.621)}+ mi) — that's usually a mismatched street name in another part of the state. Check its pin on the map, or replace it with exact coordinates in the stop list.`);
+      }
+      setStatus(statusParts.join(" "), farOnes.length ? "warn" : (matrix.source === "haversine-fallback" ? "warn" : "ok"));
 
       await drawMap(orderedPoints, cycle);
     } catch (e) {
@@ -701,8 +832,6 @@
       optimizeBtn.disabled = false;
     }
   }
-
-  function setStatus2Combined() { /* placeholder kept for readability of flow; status already set above */ }
 
   function fmtDist(meters) {
     const miles = meters / 1609.344;
@@ -730,10 +859,11 @@
     lastResult.orderedPoints.forEach((p, i) => {
       const isHome = i === 0;
       const leg = lastResult.legs[i]; // leg leaving this point (undefined for last if one-way)
-      html += `<div class="stop-item" style="cursor:default;">
-        <div class="num" style="background:${isHome ? '#16a34a' : '#2563eb'}">${isHome ? '🏠' : i}</div>
+      html += `<div class="stop-item" style="cursor:default;${p.far ? "border-color:#dc2626;" : ""}">
+        <div class="num" style="background:${isHome ? '#16a34a' : (p.far ? '#dc2626' : '#2563eb')}">${isHome ? '🏠' : i}</div>
         <div class="addr">${escapeHtml(p.address)}
-          ${p.approximate ? `<div class="meta" style="color:#92400e;">⚠ approximate match — double-check the pin on the map</div>` : ""}
+          ${p.far ? `<div class="meta" style="color:#991b1b;">🚩 unusually far from home — likely a mismatched street name, verify or use exact coordinates</div>`
+            : (p.approximate ? `<div class="meta" style="color:#92400e;">⚠ approximate match — double-check the pin on the map</div>` : "")}
           ${leg ? `<div class="meta">→ next: ${fmtDist(leg.distM)}, ${fmtTime(leg.durS)}</div>` : ""}
         </div>
       </div>`;
@@ -786,14 +916,19 @@
   document.getElementById("gmapsBtn").addEventListener("click", () => {
     if (!lastResult) return;
     const pts = lastResult.orderedPoints;
-    const origin = encodeURIComponent(pts[0].address);
+    // Use exact coordinates rather than address text — a coordinate-based stop may
+    // just have a custom label (e.g. "Warehouse") that Google Maps can't geocode,
+    // and coordinates are more precise than re-running the address through a
+    // second geocoder anyway.
+    const coordStr = (p) => encodeURIComponent(`${p.lat},${p.lon}`);
+    const origin = coordStr(pts[0]);
     let destination, waypoints;
     if (lastResult.cycle) {
       destination = origin;
-      waypoints = pts.slice(1).map(p => encodeURIComponent(p.address));
+      waypoints = pts.slice(1).map(coordStr);
     } else {
-      destination = encodeURIComponent(pts[pts.length - 1].address);
-      waypoints = pts.slice(1, -1).map(p => encodeURIComponent(p.address));
+      destination = coordStr(pts[pts.length - 1]);
+      waypoints = pts.slice(1, -1).map(coordStr);
     }
     if (waypoints.length > 9) {
       setStatus("Heads up: Google Maps' free link only supports ~9 stops in between. The map above still shows your full optimized route.", "warn");
